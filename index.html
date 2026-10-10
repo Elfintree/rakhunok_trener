@@ -74,6 +74,42 @@
     background: var(--accent); color: var(--accent-text); cursor: pointer; }
   .btn.alt { background: var(--bg2); color: var(--text); }
   .wrong { margin-top: 8px; font-size: 16px; color: var(--text); }
+
+  /* --- прогрес (діаграми) ---
+     Кольори серій — еталонна палітра dataviz, слоти 1–2 (синій, помаранчевий),
+     окремо підібрані для світлої й темної теми, а не автоматично інвертовані. */
+  :root { --s-ok: #2a78d6; --s-bad: #eb6834; --grid: rgba(0,0,0,.08); }
+  :root[data-theme="dark"] { --s-ok: #3987e5; --s-bad: #d95926; --grid: rgba(255,255,255,.10); }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --s-ok: #3987e5; --s-bad: #d95926; --grid: rgba(255,255,255,.10); }
+  }
+  .seg { display: flex; background: var(--bg2); border-radius: 12px; padding: 3px; margin: 4px 0 14px; }
+  .seg button { flex: 1; border: 0; background: transparent; color: var(--text); font: inherit;
+    font-size: 15px; padding: 8px 0; border-radius: 10px; cursor: pointer; }
+  .seg button.on { background: var(--bg); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .card { background: var(--bg2); border-radius: 16px; padding: 14px; margin-bottom: 12px; position: relative; }
+  .card h3 { margin: 0 0 2px; font-size: 16px; }
+  .card .cap { font-size: 13px; color: var(--hint); margin-bottom: 8px; }
+  .legend { display: flex; gap: 14px; font-size: 13px; color: var(--hint); margin-bottom: 4px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px;
+    vertical-align: -1px; }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .chart text { font-size: 11px; fill: var(--hint); }
+  .chart .val { font-size: 13px; fill: var(--text); font-weight: 600; }
+  .chart .lab { font-size: 13px; fill: var(--text); }
+  .tip { position: absolute; pointer-events: none; background: var(--text); color: var(--bg);
+    font-size: 13px; line-height: 1.35; padding: 6px 9px; border-radius: 8px; white-space: nowrap;
+    transform: translate(-50%, -100%); display: none; z-index: 2; }
+  .heroes { display: flex; gap: 8px; margin-bottom: 12px; }
+  .heroes div { flex: 1; background: var(--bg2); border-radius: 12px; padding: 10px 6px; text-align: center; }
+  .heroes b { display: block; font-size: 22px; }
+  .heroes span { font-size: 12px; color: var(--hint); }
+  .empty { text-align: center; color: var(--hint); padding: 30px 0; }
+  details { font-size: 14px; margin: 4px 0 16px; }
+  summary { color: var(--accent); cursor: pointer; padding: 6px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td, th { padding: 4px 6px; text-align: right; border-bottom: 1px solid var(--grid); }
+  td:first-child, th:first-child { text-align: left; }
 </style>
 </head>
 <body>
@@ -86,6 +122,15 @@
     <div class="pill"><b id="tDays">0</b><span>днів поспіль</span></div>
   </div>
   <div class="levels" id="levels"></div>
+</section>
+
+<section id="stats" class="screen">
+  <h1>Мій прогрес</h1>
+  <div class="seg" id="period">
+    <button data-d="7" class="on">7 днів</button><button data-d="14">14 днів</button><button data-d="30">30 днів</button>
+  </div>
+  <div id="statsBody"></div>
+  <button class="btn alt" id="statsHome">До рівнів</button>
 </section>
 
 <section id="play" class="screen">
@@ -143,42 +188,67 @@ const G = {
   half()    { const a = R(2, 50); return { l: `${2 * a} − ${a} =`, r: "?", a: a }; },
 };
 
+// c — короткий незмінний код для історії (місце в CloudStorage обмежене).
+// Міняти назви й порядок можна, коди — ні, інакше старі дні загубляться.
 const LEVELS = [
-  { id: "add20",   ic: "➕", t: "Додавання до 20",       s: "7 + 12",          sec: 4 },
-  { id: "sub20",   ic: "➖", t: "Віднімання до 20",      s: "18 − 13",         sec: 5 },
-  { id: "cross",   ic: "🔟", t: "Через десяток",         s: "8 + 5, 14 − 6",   sec: 4 },
-  { id: "mix20",   ic: "🔀", t: "Впереміш до 20",        s: "уважно до знака", sec: 5 },
-  { id: "missing", ic: "❓", t: "Пропущене число",       s: "7 + ? = 15",      sec: 6 },
-  { id: "dbl2",    ic: "✌️", t: "Подвоєння через 2",     s: "16 + 16",         sec: 5 },
-  { id: "dbl5",    ic: "🖐", t: "Подвоєння через 5",     s: "35 + 35",         sec: 5 },
-  { id: "dbl100",  ic: "👯", t: "Подвоєння до 100",      s: "37 + 37",         sec: 6 },
-  { id: "half",    ic: "🍕", t: "Половина",              s: "74 − 37",         sec: 6 },
+  { id: "add20",   c: "a",  ic: "➕", t: "Додавання до 20",   s: "7 + 12",          sec: 4 },
+  { id: "sub20",   c: "s",  ic: "➖", t: "Віднімання до 20",  s: "18 − 13",         sec: 5 },
+  { id: "cross",   c: "c",  ic: "🔟", t: "Через десяток",     s: "8 + 5, 14 − 6",   sec: 4 },
+  { id: "mix20",   c: "x",  ic: "🔀", t: "Впереміш до 20",    s: "уважно до знака", sec: 5 },
+  { id: "missing", c: "p",  ic: "❓", t: "Пропущене число",   s: "7 + ? = 15",      sec: 6 },
+  { id: "dbl2",    c: "d2", ic: "✌️", t: "Подвоєння через 2", s: "16 + 16",         sec: 5 },
+  { id: "dbl5",    c: "d5", ic: "🖐", t: "Подвоєння через 5", s: "35 + 35",         sec: 5 },
+  { id: "dbl100",  c: "dd", ic: "👯", t: "Подвоєння до 100",  s: "37 + 37",         sec: 6 },
+  { id: "half",    c: "h",  ic: "🍕", t: "Половина",          s: "74 − 37",         sec: 6 },
 ];
+const MIST_LEVEL = { id: "mist", c: "e", ic: "🎯", t: "Робота над помилками", sec: 6 };
 
 // ---------- збереження ----------
 // Telegram CloudStorage — прогрес однаковий на телефоні й комп'ютері.
 // Поза Telegram (або на старому клієнті) — localStorage.
-const KEY = "rt_state";
+const KEY = "rt_state", HKEY = "rt_hist";
 let S = { best: {}, mist: {}, days: {}, };
+// Історія: { "2026-10-10": "a:12:1,c:9:3" } — код рівня : правильно : помилок.
+let H = {};
 
 function cloudOk() { return tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast("6.9"); }
 function loadState() {
+  const parse = (raw, into) => { try { return raw ? Object.assign(into, JSON.parse(raw)) : into; } catch (e) { return into; } };
   return new Promise(res => {
-    const apply = raw => { try { if (raw) S = Object.assign(S, JSON.parse(raw)); } catch (e) {} res(); };
-    if (cloudOk()) tg.CloudStorage.getItem(KEY, (err, v) => apply(err ? lsGet() : (v || lsGet())));
-    else apply(lsGet());
+    const apply = (rs, rh) => { S = parse(rs, S); H = parse(rh, H); res(); };
+    if (cloudOk()) tg.CloudStorage.getItems([KEY, HKEY], (err, v) => err || !v
+      ? apply(lsGet(KEY), lsGet(HKEY))
+      : apply(v[KEY] || lsGet(KEY), v[HKEY] || lsGet(HKEY)));
+    else apply(lsGet(KEY), lsGet(HKEY));
   });
 }
-function lsGet() { try { return localStorage.getItem(KEY); } catch (e) { return null; } }
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function saveState() {
   // CloudStorage тримає до 4096 символів на ключ — обрізаємо історію помилок і днів.
   const m = Object.entries(S.mist).sort((x, y) => y[1] - x[1]).slice(0, 40);
   S.mist = Object.fromEntries(m);
   const d = Object.keys(S.days).sort().slice(-60);
   S.days = Object.fromEntries(d.map(k => [k, S.days[k]]));
-  const raw = JSON.stringify(S);
-  try { localStorage.setItem(KEY, raw); } catch (e) {}
-  if (cloudOk()) tg.CloudStorage.setItem(KEY, raw, () => {});
+  const hd = Object.keys(H).sort().slice(-31);           // місяць історії
+  H = Object.fromEntries(hd.map(k => [k, H[k]]));
+  for (const [k, raw] of [[KEY, JSON.stringify(S)], [HKEY, JSON.stringify(H)]]) {
+    try { localStorage.setItem(k, raw); } catch (e) {}
+    if (cloudOk()) tg.CloudStorage.setItem(k, raw, () => {});
+  }
+}
+function histGet(day) {        // { код: [правильно, помилок] }
+  const out = {};
+  for (const part of (H[day] || "").split(",")) {
+    const [c, ok, bad] = part.split(":");
+    if (c) out[c] = [Number(ok) || 0, Number(bad) || 0];
+  }
+  return out;
+}
+function histAdd(code, ok) {
+  const day = dayKey(), h = histGet(day);
+  h[code] = h[code] || [0, 0];
+  h[code][ok ? 0 : 1]++;
+  H[day] = Object.entries(h).map(([c, v]) => `${c}:${v[0]}:${v[1]}`).join(",");
 }
 const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 function streakDays() {
@@ -201,6 +271,13 @@ function renderHome() {
   $("tToday").textContent = S.days[dayKey()] || 0;
   $("tDays").textContent = streakDays();
   const box = $("levels"); box.innerHTML = "";
+  const sb = document.createElement("button");
+  sb.className = "lvl";
+  sb.innerHTML = `<span class="ic">📊</span><span class="tx"><b>Мій прогрес</b>
+    <small>діаграма по днях і за типами рахунку</small></span>`;
+  // спершу показати екран: ширина діаграм міряється з уже видимого контейнера
+  sb.onclick = () => { show("stats"); renderStats(); };
+  box.appendChild(sb);
   const mCount = Object.keys(S.mist).length;
   const mb = document.createElement("button");
   mb.className = "lvl mist"; mb.disabled = mCount === 0;
@@ -231,18 +308,18 @@ function makeRound(id) {
     const keys = Object.entries(S.mist).sort((x, y) => y[1] - x[1]).map(([k]) => k);
     for (const k of keys.slice(0, ROUND)) out.push(JSON.parse(k));
     for (const k of keys.slice(0, ROUND - out.length)) out.push(JSON.parse(k));
-    while (out.length < ROUND) out.push(G.cross());
+    while (out.length < ROUND) out.push({ ...G.cross(), lv: "cross" });
     return out.sort(() => Math.random() - .5);
   }
   for (let i = 0; i < 500 && out.length < ROUND; i++) {
-    const p = G[id](), k = p.l + p.r;
+    const p = { ...G[id](), lv: id }, k = p.l + p.r;
     if (!seen.has(k)) { seen.add(k); out.push(p); }
   }
   return out;
 }
 
 function start(id) {
-  const L = LEVELS.find(x => x.id === id) || { id: "mist", t: "Робота над помилками", sec: 6 };
+  const L = LEVELS.find(x => x.id === id) || MIST_LEVEL;
   R0 = { L, queue: makeRound(id), total: 0, done: 0, wrong: [], requeued: new Set(),
          t0: Date.now(), input: "", lock: false, streak: 0, cleared: [] };
   R0.total = R0.queue.length;
@@ -278,12 +355,16 @@ function key(k) {
   // Кількість цифр відповіді відома — щойно введено стільки ж, перевіряємо одразу.
   if (R0.input.length === String(cur().a).length) check();
 }
-function factKey(p) { return JSON.stringify({ l: p.l, r: p.r, a: p.a }); }
+function factKey(p) { return JSON.stringify({ l: p.l, r: p.r, a: p.a, lv: p.lv }); }
+// У статистиці приклад рахується за своїм типом, навіть якщо прийшов
+// із «Роботи над помилками»; старі помилки без типу — під «помилками».
+const levelOf = p => LEVELS.find(L => L.id === p.lv) || MIST_LEVEL;
 
 function check() {
   const p = cur(), ok = Number(R0.input) === p.a;
   R0.lock = true;
   S.days[dayKey()] = (S.days[dayKey()] || 0) + 1;
+  histAdd(levelOf(p).c, ok);
   if (ok) {
     R0.streak++;
     haptic("success");
@@ -337,6 +418,180 @@ function finish() {
 
 function haptic(kind) { try { tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(kind); } catch (e) {} }
 
+// ---------- прогрес ----------
+let PERIOD = 7;
+const SVGNS = "http://www.w3.org/2000/svg";
+const esc = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+const pct = (ok, all) => all ? Math.round(100 * ok / all) : 0;
+const DOW = ["нд", "пн", "вт", "ср", "чт", "пт", "сб"];
+
+function periodDays() {
+  const out = [], d = new Date();
+  d.setDate(d.getDate() - (PERIOD - 1));
+  for (let i = 0; i < PERIOD; i++) { out.push(new Date(d)); d.setDate(d.getDate() + 1); }
+  return out;
+}
+function niceMax(v) {
+  if (v <= 10) return 10;
+  const step = v <= 50 ? 10 : v <= 100 ? 20 : 50;
+  return Math.ceil(v / step) * step;
+}
+// Прямокутник із заокругленим лише «даними» кінцем (4px), квадратним біля бази.
+function topRound(x, y, w, h, r) {
+  r = Math.min(r, h, w / 2);
+  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+}
+function rightRound(x, y, w, h, r) {
+  r = Math.min(r, w, h / 2);
+  return `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h - r}Q${x + w},${y + h} ${x + w - r},${y + h}H${x}Z`;
+}
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function tipAt(card, html, x, y) {
+  const t = card.querySelector(".tip");
+  t.innerHTML = html; t.style.display = "block";
+  // не вилазити за край картки
+  const half = t.offsetWidth / 2, W = card.clientWidth;
+  t.style.left = `${Math.max(half + 4, Math.min(W - half - 4, x))}px`;
+  t.style.top = `${y - 6}px`;
+}
+function hideTips() { document.querySelectorAll(".tip").forEach(t => t.style.display = "none"); }
+
+function renderStats() {
+  const days = periodDays(), body = $("statsBody");
+  const perDay = days.map(d => {
+    const h = histGet(dayKey(d));
+    let ok = 0, bad = 0;
+    for (const v of Object.values(h)) { ok += v[0]; bad += v[1]; }
+    return { d, ok, bad };
+  });
+  const perLvl = {};
+  for (const { d } of perDay) for (const [c, v] of Object.entries(histGet(dayKey(d)))) {
+    perLvl[c] = perLvl[c] || [0, 0]; perLvl[c][0] += v[0]; perLvl[c][1] += v[1];
+  }
+  const tot = perDay.reduce((a, x) => [a[0] + x.ok, a[1] + x.bad], [0, 0]);
+  const active = perDay.filter(x => x.ok + x.bad).length;
+
+  if (!tot[0] && !tot[1]) {
+    body.innerHTML = `<div class="empty">За ці ${PERIOD} днів ще немає прикладів.<br>Пройди раунд — і тут з'явиться діаграма.</div>`;
+    return;
+  }
+  body.innerHTML = `
+    <div class="heroes">
+      <div><b>${tot[0] + tot[1]}</b><span>прикладів</span></div>
+      <div><b>${pct(tot[0], tot[0] + tot[1])}%</b><span>правильно</span></div>
+      <div><b>${active} / ${PERIOD}</b><span>днів з тренуванням</span></div>
+    </div>
+    <div class="card" id="cDays">
+      <h3>Приклади по днях</h3>
+      <div class="legend"><span><i style="background:var(--s-ok)"></i>Правильно</span>
+        <span><i style="background:var(--s-bad)"></i>Помилки</span></div>
+      <div class="chart" id="chDays"></div><div class="tip"></div>
+    </div>
+    <div class="card" id="cLvl">
+      <h3>За типами рахунку</h3>
+      <div class="cap">Частка правильних відповідей · найслабше — зверху</div>
+      <div class="chart" id="chLvl"></div><div class="tip"></div>
+    </div>
+    <details><summary>Показати таблицею</summary>${statsTable(perDay, perLvl)}</details>`;
+  drawDays(perDay);
+  drawLevels(perLvl);
+}
+
+function drawDays(perDay) {
+  const box = $("chDays"), card = $("cDays");
+  const W = box.clientWidth || 320, H = 170, padL = 28, padB = 22, padT = 8;
+  const plotW = W - padL, plotH = H - padB - padT;
+  const max = niceMax(Math.max(...perDay.map(x => x.ok + x.bad)));
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img",
+    "aria-label": "Стовпчикова діаграма: правильні відповіді й помилки по днях" }, box);
+  const y = v => padT + plotH - plotH * v / max;
+  for (const g of [0, max / 2, max]) {           // приглушена сітка: база, середина, верх
+    el("line", { x1: padL, x2: W, y1: y(g), y2: y(g), stroke: "var(--grid)", "stroke-width": 1 }, svg);
+    el("text", { x: padL - 6, y: y(g) + 4, "text-anchor": "end" }, svg).textContent = g;
+  }
+  const band = plotW / perDay.length, bw = Math.min(24, band * 0.62);
+  const every = perDay.length <= 7 ? 1 : perDay.length <= 14 ? 2 : 5;
+  perDay.forEach((x, i) => {
+    const cx = padL + band * i + band / 2, bx = cx - bw / 2;
+    const okH = plotH * x.ok / max, badH = plotH * x.bad / max, gap = x.ok && x.bad ? 2 : 0;
+    if (x.ok) el("path", { d: x.bad ? `M${bx},${y(0)}h${bw}v${-okH}h${-bw}Z`
+                                     : topRound(bx, y(0) - okH, bw, okH, 4), fill: "var(--s-ok)" }, svg);
+    if (x.bad) el("path", { d: topRound(bx, y(0) - okH - gap - badH, bw, badH, 4), fill: "var(--s-bad)" }, svg);
+    const last = i === perDay.length - 1;
+    if (i % every === 0 || last) {
+      const lab = last ? "сьог." : PERIOD === 7 ? DOW[x.d.getDay()] : `${x.d.getDate()}.${x.d.getMonth() + 1}`;
+      el("text", { x: cx, y: H - 6, "text-anchor": "middle" }, svg).textContent = lab;
+    }
+    // Ціль для дотику — уся смуга дня, а не тонкий стовпчик.
+    const hit = el("rect", { x: padL + band * i, y: padT, width: band, height: plotH, fill: "transparent" }, svg);
+    const html = `<b>${x.d.getDate()}.${String(x.d.getMonth() + 1).padStart(2, "0")}, ${DOW[x.d.getDay()]}</b><br>` +
+      (x.ok + x.bad ? `Правильно: ${x.ok}<br>Помилки: ${x.bad}<br>Точність: ${pct(x.ok, x.ok + x.bad)}%` : "не тренувалась");
+    const showTip = () => tipAt(card, html, box.offsetLeft + cx * box.clientWidth / W,
+                                box.offsetTop + Math.min(y(x.ok + x.bad), y(0) - 10) * box.clientHeight / H);
+    hit.addEventListener("pointerenter", showTip);
+    hit.addEventListener("pointerdown", showTip);
+    hit.addEventListener("pointerleave", hideTips);
+  });
+}
+
+function drawLevels(perLvl) {
+  const box = $("chLvl"), card = $("cLvl");
+  const rows = [...LEVELS, MIST_LEVEL]
+    .filter(L => perLvl[L.c])
+    .map(L => ({ L, ok: perLvl[L.c][0], all: perLvl[L.c][0] + perLvl[L.c][1] }))
+    .sort((a, b) => pct(a.ok, a.all) - pct(b.ok, b.all));
+  const W = box.clientWidth || 320, row = 34, valW = 46, bh = 16, H = rows.length * row;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img",
+    "aria-label": "Частка правильних відповідей за типами рахунку" }, box);
+  // Назви малюємо першими й міряємо: смуга починається після найдовшої,
+  // тож підпис ніколи не налазить на неї.
+  const labs = rows.map((r, i) => {
+    const t = el("text", { x: 0, y: i * row + row / 2 + 4, class: "lab" }, svg);
+    t.textContent = `${r.L.ic} ${r.L.t}`;
+    return t;
+  });
+  const labW = Math.min(W * 0.55, Math.max(...labs.map(t => t.getComputedTextLength())) + 10);
+  const barMax = Math.max(40, W - labW - valW - 4);
+  rows.forEach((r, i) => {
+    const yc = i * row + row / 2, p = pct(r.ok, r.all), w = Math.max(3, barMax * p / 100);
+    el("rect", { x: labW, y: yc - bh / 2, width: barMax, height: bh, rx: 4, fill: "var(--grid)" }, svg);
+    el("path", { d: rightRound(labW, yc - bh / 2, w, bh, 4), fill: "var(--s-ok)" }, svg);
+    el("text", { x: W, y: yc + 5, "text-anchor": "end", class: "val" }, svg).textContent = `${p}%`;
+    const hit = el("rect", { x: 0, y: i * row, width: W, height: row, fill: "transparent" }, svg);
+    const html = `<b>${esc(r.L.t)}</b><br>Правильно: ${r.ok} з ${r.all}<br>Помилки: ${r.all - r.ok}`;
+    const showTip = () => tipAt(card, html, box.offsetLeft + (labW + w / 2) * box.clientWidth / W,
+                                box.offsetTop + (yc - bh / 2) * box.clientHeight / H);
+    hit.addEventListener("pointerenter", showTip);
+    hit.addEventListener("pointerdown", showTip);
+    hit.addEventListener("pointerleave", hideTips);
+  });
+}
+
+function statsTable(perDay, perLvl) {
+  const dayRows = perDay.filter(x => x.ok + x.bad).map(x =>
+    `<tr><td>${x.d.getDate()}.${String(x.d.getMonth() + 1).padStart(2, "0")}</td><td>${x.ok}</td><td>${x.bad}</td><td>${pct(x.ok, x.ok + x.bad)}%</td></tr>`).join("");
+  const lvlRows = [...LEVELS, MIST_LEVEL].filter(L => perLvl[L.c]).map(L => {
+    const [ok, bad] = perLvl[L.c];
+    return `<tr><td>${esc(L.t)}</td><td>${ok}</td><td>${bad}</td><td>${pct(ok, ok + bad)}%</td></tr>`;
+  }).join("");
+  const head = first => `<tr><th>${first}</th><th>Правильно</th><th>Помилки</th><th>Точність</th></tr>`;
+  return `<table>${head("День")}${dayRows}</table><br><table>${head("Тип")}${lvlRows}</table>`;
+}
+
+document.querySelectorAll("#period button").forEach(b => b.onclick = () => {
+  PERIOD = Number(b.dataset.d);
+  document.querySelectorAll("#period button").forEach(x => x.classList.toggle("on", x === b));
+  renderStats();
+});
+$("statsHome").onclick = () => { renderHome(); show("home"); };
+document.addEventListener("pointerdown", e => { if (!e.target.closest("svg")) hideTips(); });
+window.addEventListener("resize", () => { if ($("stats").classList.contains("on")) renderStats(); });
+
 // ---------- клавіатура ----------
 for (const k of ["1","2","3","4","5","6","7","8","9","⌫","0","✓"]) {
   const b = document.createElement("button");
@@ -356,6 +611,9 @@ $("toHome").onclick = () => { renderHome(); show("home"); };
 function applyTheme() {
   if (!tg) return;
   document.documentElement.setAttribute("data-tg", "");
+  // кольори діаграм обираються під світлу чи темну тему Telegram
+  document.documentElement.setAttribute("data-theme", tg.colorScheme === "dark" ? "dark" : "light");
+  if ($("stats").classList.contains("on")) renderStats();
   const p = tg.themeParams || {}, set = (v, c) => c && document.documentElement.style.setProperty(v, c);
   set("--bg", p.bg_color); set("--bg2", p.secondary_bg_color); set("--text", p.text_color);
   set("--hint", p.hint_color); set("--accent", p.button_color); set("--accent-text", p.button_text_color);
