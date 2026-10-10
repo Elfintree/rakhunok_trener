@@ -86,6 +86,11 @@
   .seg { display: flex; background: var(--bg2); border-radius: 12px; padding: 3px; margin: 4px 0 14px; }
   .seg button { flex: 1; border: 0; background: transparent; color: var(--text); font: inherit;
     font-size: 15px; padding: 8px 0; border-radius: 10px; cursor: pointer; }
+  .range { display: none; gap: 8px; margin: -6px 0 14px; }
+  .range.on { display: flex; }
+  .range label { flex: 1; font-size: 13px; color: var(--hint); }
+  .range input { display: block; width: 100%; margin-top: 3px; font: inherit; font-size: 15px; color: var(--text);
+    background: var(--bg2); border: 0; border-radius: 10px; padding: 8px; }
   .seg button.on { background: var(--bg); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
   .card { background: var(--bg2); border-radius: 16px; padding: 14px; margin-bottom: 12px; position: relative; }
   .card h3 { margin: 0 0 2px; font-size: 16px; }
@@ -127,7 +132,11 @@
 <section id="stats" class="screen">
   <h1>Мій прогрес</h1>
   <div class="seg" id="period">
-    <button data-d="7" class="on">7 днів</button><button data-d="14">14 днів</button><button data-d="30">30 днів</button>
+    <button data-p="7" class="on">7 днів</button><button data-p="30">30 днів</button><button data-p="all">Весь час</button><button data-p="custom">Період</button>
+  </div>
+  <div class="range" id="range">
+    <label>від <input type="date" id="rFrom"></label>
+    <label>до <input type="date" id="rTo"></label>
   </div>
   <div id="statsBody"></div>
   <button class="btn alt" id="statsHome">До рівнів</button>
@@ -206,35 +215,62 @@ const MIST_LEVEL = { id: "mist", c: "e", ic: "🎯", t: "Робота над п�
 // ---------- збереження ----------
 // Telegram CloudStorage — прогрес однаковий на телефоні й комп'ютері.
 // Поза Telegram (або на старому клієнті) — localStorage.
-const KEY = "rt_state", HKEY = "rt_hist";
+// Історія зберігається по місяцях: ключ rt_h_2026_10 = { "2026-10-10": "a:12:1,c:9:3" }
+// (код рівня : правильно : помилок). Ключ CloudStorage вміщує 4096 символів —
+// місяць у нього влазить, а ключів можна до 1024, тож історія не обрізається.
+// rt_hist — стара схема (лише останні 31 день); при першому запуску переноситься.
+const KEY = "rt_state", OLD_HKEY = "rt_hist", MPFX = "rt_h_";
 let S = { best: {}, mist: {}, days: {}, };
-// Історія: { "2026-10-10": "a:12:1,c:9:3" } — код рівня : правильно : помилок.
 let H = {};
+const dirtyMonths = new Set();
+const monthKey = day => MPFX + day.slice(0, 7).replace("-", "_");
 
 function cloudOk() { return tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast("6.9"); }
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsKeys() { try { return Object.keys(localStorage); } catch (e) { return []; } }
 function loadState() {
-  const parse = (raw, into) => { try { return raw ? Object.assign(into, JSON.parse(raw)) : into; } catch (e) { return into; } };
+  const parse = raw => { try { return raw ? JSON.parse(raw) : {}; } catch (e) { return {}; } };
+  const apply = (get, keys) => {
+    S = Object.assign(S, parse(get(KEY)));
+    const old = parse(get(OLD_HKEY));
+    for (const day in old) { H[day] = old[day]; dirtyMonths.add(monthKey(day)); }
+    for (const k of keys) if (k.startsWith(MPFX)) Object.assign(H, parse(get(k)));
+  };
   return new Promise(res => {
-    const apply = (rs, rh) => { S = parse(rs, S); H = parse(rh, H); res(); };
-    if (cloudOk()) tg.CloudStorage.getItems([KEY, HKEY], (err, v) => err || !v
-      ? apply(lsGet(KEY), lsGet(HKEY))
-      : apply(v[KEY] || lsGet(KEY), v[HKEY] || lsGet(HKEY)));
-    else apply(lsGet(KEY), lsGet(HKEY));
+    const local = () => { apply(lsGet, lsKeys()); res(); };
+    if (!cloudOk()) return local();
+    tg.CloudStorage.getKeys((err, keys) => {
+      if (err || !keys) return local();
+      const want = [KEY, OLD_HKEY, ...keys.filter(k => k.startsWith(MPFX))];
+      tg.CloudStorage.getItems(want, (err2, v) => {
+        if (err2 || !v) return local();
+        // хмара головна; чого там нема (напр., зіграно поза Telegram) — з localStorage
+        apply(k => v[k] || lsGet(k), [...new Set([...want, ...lsKeys()])]);
+        res();
+      });
+    });
   });
 }
-function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function put(k, raw) {
+  try { localStorage.setItem(k, raw); } catch (e) {}
+  if (cloudOk()) tg.CloudStorage.setItem(k, raw, () => {});
+}
 function saveState() {
-  // CloudStorage тримає до 4096 символів на ключ — обрізаємо історію помилок і днів.
+  // помилки й лічильник днів тримаємо компактними — вони в одному ключі
   const m = Object.entries(S.mist).sort((x, y) => y[1] - x[1]).slice(0, 40);
   S.mist = Object.fromEntries(m);
   const d = Object.keys(S.days).sort().slice(-60);
   S.days = Object.fromEntries(d.map(k => [k, S.days[k]]));
-  const hd = Object.keys(H).sort().slice(-31);           // місяць історії
-  H = Object.fromEntries(hd.map(k => [k, H[k]]));
-  for (const [k, raw] of [[KEY, JSON.stringify(S)], [HKEY, JSON.stringify(H)]]) {
-    try { localStorage.setItem(k, raw); } catch (e) {}
-    if (cloudOk()) tg.CloudStorage.setItem(k, raw, () => {});
+  put(KEY, JSON.stringify(S));
+  for (const mk of dirtyMonths) {
+    const month = Object.fromEntries(Object.entries(H).filter(([day]) => monthKey(day) === mk));
+    put(mk, JSON.stringify(month));
   }
+  if (dirtyMonths.size && (lsGet(OLD_HKEY) || cloudOk())) {   // стару схему перенесено — прибрати
+    try { localStorage.removeItem(OLD_HKEY); } catch (e) {}
+    if (cloudOk()) tg.CloudStorage.removeItem(OLD_HKEY, () => {});
+  }
+  dirtyMonths.clear();
 }
 function histGet(day) {        // { код: [правильно, помилок] }
   const out = {};
@@ -246,6 +282,7 @@ function histGet(day) {        // { код: [правильно, помилок]
 }
 function histAdd(code, ok) {
   const day = dayKey(), h = histGet(day);
+  dirtyMonths.add(monthKey(day));
   h[code] = h[code] || [0, 0];
   h[code][ok ? 0 : 1]++;
   H[day] = Object.entries(h).map(([c, v]) => `${c}:${v[0]}:${v[1]}`).join(",");
@@ -419,17 +456,49 @@ function finish() {
 function haptic(kind) { try { tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(kind); } catch (e) {} }
 
 // ---------- прогрес ----------
-let PERIOD = 7;
+// Обраний період: kind — 7 | 30 | all | custom; from/to — рядки дати "РРРР-ММ-ДД".
+let PERIOD = { kind: "7" };
 const SVGNS = "http://www.w3.org/2000/svg";
 const esc = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
 const pct = (ok, all) => all ? Math.round(100 * ok / all) : 0;
 const DOW = ["нд", "пн", "вт", "ср", "чт", "пт", "сб"];
 
+const MONTHS = ["січ", "лют", "бер", "кві", "тра", "чер", "лип", "сер", "вер", "жов", "лис", "гру"];
+const parseDay = k => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d); };
+const fmtD = d => `${d.getDate()}.${String(d.getMonth() + 1).padStart(2, "0")}`;
+const firstDay = () => Object.keys(H).filter(k => H[k]).sort()[0] || dayKey();
+
+function periodRange() {
+  const today = dayKey();
+  if (PERIOD.kind === "all") return [firstDay(), today];
+  if (PERIOD.kind === "custom") {
+    let { from, to } = PERIOD;
+    if (from > to) [from, to] = [to, from];
+    return [from, to];
+  }
+  const d = new Date(); d.setDate(d.getDate() - (Number(PERIOD.kind) - 1));
+  return [dayKey(d), today];
+}
 function periodDays() {
-  const out = [], d = new Date();
-  d.setDate(d.getDate() - (PERIOD - 1));
-  for (let i = 0; i < PERIOD; i++) { out.push(new Date(d)); d.setDate(d.getDate() + 1); }
+  const [from, to] = periodRange(), out = [];
+  for (const d = parseDay(from); dayKey(d) <= to; d.setDate(d.getDate() + 1)) out.push(new Date(d));
   return out;
+}
+// Довгий період у стовпчиках по днях не прочитати: до місяця — дні,
+// до півроку — тижні (з понеділка), далі — місяці.
+function bucketize(perDay) {
+  const unit = perDay.length <= 31 ? "day" : perDay.length <= 26 * 7 ? "week" : "month";
+  if (unit === "day") return { unit, buckets: perDay.map(x => ({ ...x, from: x.d, to: x.d })) };
+  const map = new Map();
+  for (const x of perDay) {
+    let start;
+    if (unit === "week") { start = new Date(x.d); start.setDate(start.getDate() - (start.getDay() + 6) % 7); }
+    else start = new Date(x.d.getFullYear(), x.d.getMonth(), 1);
+    const k = dayKey(start);
+    if (!map.has(k)) map.set(k, { d: start, from: x.d, to: x.d, ok: 0, bad: 0 });
+    const b = map.get(k); b.ok += x.ok; b.bad += x.bad; b.to = x.d;
+  }
+  return { unit, buckets: [...map.values()] };
 }
 function niceMax(v) {
   if (v <= 10) return 10;
@@ -475,19 +544,24 @@ function renderStats() {
   }
   const tot = perDay.reduce((a, x) => [a[0] + x.ok, a[1] + x.bad], [0, 0]);
   const active = perDay.filter(x => x.ok + x.bad).length;
+  const { unit, buckets } = bucketize(perDay);
+  const [from, to] = periodRange();
+  const span = from === to ? `${fmtD(parseDay(from))}.${from.slice(0, 4)}`
+    : `${fmtD(parseDay(from))}.${from.slice(0, 4)} — ${fmtD(parseDay(to))}.${to.slice(0, 4)}`;
 
   if (!tot[0] && !tot[1]) {
-    body.innerHTML = `<div class="empty">За ці ${PERIOD} днів ще немає прикладів.<br>Пройди раунд — і тут з'явиться діаграма.</div>`;
+    body.innerHTML = `<div class="cap">${span}</div><div class="empty">За цей період прикладів немає.<br>Пройди раунд — і тут з'явиться діаграма.</div>`;
     return;
   }
   body.innerHTML = `
+    <div class="cap" style="margin:-6px 0 10px">${span}</div>
     <div class="heroes">
       <div><b>${tot[0] + tot[1]}</b><span>прикладів</span></div>
       <div><b>${pct(tot[0], tot[0] + tot[1])}%</b><span>правильно</span></div>
-      <div><b>${active} / ${PERIOD}</b><span>днів з тренуванням</span></div>
+      <div><b>${active}</b><span>${perDay.length <= 7 && PERIOD.kind === "7" ? "днів з 7" : `днів із ${perDay.length}`}</span></div>
     </div>
     <div class="card" id="cDays">
-      <h3>Приклади по днях</h3>
+      <h3>Приклади ${{ day: "по днях", week: "по тижнях", month: "по місяцях" }[unit]}</h3>
       <div class="legend"><span><i style="background:var(--s-ok)"></i>Правильно</span>
         <span><i style="background:var(--s-bad)"></i>Помилки</span></div>
       <div class="chart" id="chDays"></div><div class="tip"></div>
@@ -497,12 +571,23 @@ function renderStats() {
       <div class="cap">Частка правильних відповідей · найслабше — зверху</div>
       <div class="chart" id="chLvl"></div><div class="tip"></div>
     </div>
-    <details><summary>Показати таблицею</summary>${statsTable(perDay, perLvl)}</details>`;
-  drawDays(perDay);
+    <details><summary>Показати таблицею</summary>${statsTable(buckets, unit, perLvl)}</details>`;
+  drawDays(buckets, unit);
   drawLevels(perLvl);
 }
 
-function drawDays(perDay) {
+function bucketLabel(x, unit, n) {
+  if (unit === "month") return MONTHS[x.d.getMonth()] + (x.d.getMonth() === 0 ? ` ${String(x.d.getFullYear()).slice(2)}` : "");
+  if (unit === "week") return fmtD(x.from);
+  if (dayKey(x.d) === dayKey()) return "сьог.";
+  return n <= 7 ? DOW[x.d.getDay()] : `${x.d.getDate()}.${x.d.getMonth() + 1}`;
+}
+function bucketTitle(x, unit) {
+  if (unit === "month") return `${MONTHS[x.d.getMonth()]} ${x.d.getFullYear()}`;
+  if (unit === "week") return `тиждень ${fmtD(x.from)}–${fmtD(x.to)}`;
+  return `${fmtD(x.d)}, ${DOW[x.d.getDay()]}`;
+}
+function drawDays(perDay, unit) {
   const box = $("chDays"), card = $("cDays");
   const W = box.clientWidth || 320, H = 170, padL = 28, padB = 22, padT = 8;
   const plotW = W - padL, plotH = H - padB - padT;
@@ -515,21 +600,28 @@ function drawDays(perDay) {
     el("text", { x: padL - 6, y: y(g) + 4, "text-anchor": "end" }, svg).textContent = g;
   }
   const band = plotW / perDay.length, bw = Math.min(24, band * 0.62);
-  const every = perDay.length <= 7 ? 1 : perDay.length <= 14 ? 2 : 5;
+  // не більше ~8 коротких підписів («пн», «бер») чи ~6 дат («25.9» ширші)
+  const every = Math.max(1, Math.ceil(perDay.length / (unit === "day" && perDay.length > 7 ? 6 : 8)));
   perDay.forEach((x, i) => {
     const cx = padL + band * i + band / 2, bx = cx - bw / 2;
     const okH = plotH * x.ok / max, badH = plotH * x.bad / max, gap = x.ok && x.bad ? 2 : 0;
     if (x.ok) el("path", { d: x.bad ? `M${bx},${y(0)}h${bw}v${-okH}h${-bw}Z`
                                      : topRound(bx, y(0) - okH, bw, okH, 4), fill: "var(--s-ok)" }, svg);
     if (x.bad) el("path", { d: topRound(bx, y(0) - okH - gap - badH, bw, badH, 4), fill: "var(--s-bad)" }, svg);
-    const last = i === perDay.length - 1;
-    if (i % every === 0 || last) {
-      const lab = last ? "сьог." : PERIOD === 7 ? DOW[x.d.getDay()] : `${x.d.getDate()}.${x.d.getMonth() + 1}`;
-      el("text", { x: cx, y: H - 6, "text-anchor": "middle" }, svg).textContent = lab;
+    // останній підпис — завжди; черговий, що стоїть упритул перед ним, — пропускаємо
+    const n = perDay.length, last = i === n - 1;
+    if (last || (i % every === 0 && n - 1 - i >= every)) {
+      const t = el("text", { x: cx, y: H - 6, "text-anchor": "middle" }, svg);
+      t.textContent = bucketLabel(x, unit, n);
+      // Підпис, що налазить на попередній, не показуємо; останній («сьог.»,
+      // кінець періоду) важливіший — тоді прибираємо попередній.
+      const prev = svg._lastLabel, b = t.getBBox();
+      if (prev && prev.getBBox().x + prev.getBBox().width + 4 > b.x) (last ? prev : t).remove();
+      if (t.isConnected) svg._lastLabel = t;
     }
     // Ціль для дотику — уся смуга дня, а не тонкий стовпчик.
     const hit = el("rect", { x: padL + band * i, y: padT, width: band, height: plotH, fill: "transparent" }, svg);
-    const html = `<b>${x.d.getDate()}.${String(x.d.getMonth() + 1).padStart(2, "0")}, ${DOW[x.d.getDay()]}</b><br>` +
+    const html = `<b>${bucketTitle(x, unit)}</b><br>` +
       (x.ok + x.bad ? `Правильно: ${x.ok}<br>Помилки: ${x.bad}<br>Точність: ${pct(x.ok, x.ok + x.bad)}%` : "не тренувалась");
     const showTip = () => tipAt(card, html, box.offsetLeft + cx * box.clientWidth / W,
                                 box.offsetTop + Math.min(y(x.ok + x.bad), y(0) - 10) * box.clientHeight / H);
@@ -572,20 +664,35 @@ function drawLevels(perLvl) {
   });
 }
 
-function statsTable(perDay, perLvl) {
-  const dayRows = perDay.filter(x => x.ok + x.bad).map(x =>
-    `<tr><td>${x.d.getDate()}.${String(x.d.getMonth() + 1).padStart(2, "0")}</td><td>${x.ok}</td><td>${x.bad}</td><td>${pct(x.ok, x.ok + x.bad)}%</td></tr>`).join("");
+function statsTable(buckets, unit, perLvl) {
+  const dayRows = buckets.filter(x => x.ok + x.bad).map(x =>
+    `<tr><td>${bucketTitle(x, unit)}</td><td>${x.ok}</td><td>${x.bad}</td><td>${pct(x.ok, x.ok + x.bad)}%</td></tr>`).join("");
   const lvlRows = [...LEVELS, MIST_LEVEL].filter(L => perLvl[L.c]).map(L => {
     const [ok, bad] = perLvl[L.c];
     return `<tr><td>${esc(L.t)}</td><td>${ok}</td><td>${bad}</td><td>${pct(ok, ok + bad)}%</td></tr>`;
   }).join("");
   const head = first => `<tr><th>${first}</th><th>Правильно</th><th>Помилки</th><th>Точність</th></tr>`;
-  return `<table>${head("День")}${dayRows}</table><br><table>${head("Тип")}${lvlRows}</table>`;
+  return `<table>${head({ day: "День", week: "Тиждень", month: "Місяць" }[unit])}${dayRows}</table><br><table>${head("Тип")}${lvlRows}</table>`;
 }
 
 document.querySelectorAll("#period button").forEach(b => b.onclick = () => {
-  PERIOD = Number(b.dataset.d);
+  const kind = b.dataset.p;
+  if (kind === "custom") {
+    // за замовчуванням — останні 30 днів, далі людина сама обирає дати
+    const d = new Date(); d.setDate(d.getDate() - 29);
+    $("rFrom").value = PERIOD.from || dayKey(d);
+    $("rTo").value = PERIOD.to || dayKey();
+    $("rFrom").min = $("rTo").min = firstDay();
+    $("rFrom").max = $("rTo").max = dayKey();
+  }
+  PERIOD = { ...PERIOD, kind, from: $("rFrom").value, to: $("rTo").value };
+  $("range").classList.toggle("on", kind === "custom");
   document.querySelectorAll("#period button").forEach(x => x.classList.toggle("on", x === b));
+  renderStats();
+});
+for (const id of ["rFrom", "rTo"]) $(id).addEventListener("change", () => {
+  if (!$("rFrom").value || !$("rTo").value) return;
+  PERIOD = { kind: "custom", from: $("rFrom").value, to: $("rTo").value };
   renderStats();
 });
 $("statsHome").onclick = () => { renderHome(); show("home"); };
