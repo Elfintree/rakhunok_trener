@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Рахунок-тренер</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: #ffffff; --bg2: #f1f3f6; --text: #14171a; --hint: #6b7280;
+    --accent: #2f7de1; --accent-text: #ffffff;
+    --ok: #1f9d55; --bad: #d64545;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-tg]) {
+      --bg: #17191c; --bg2: #24272b; --text: #eceff1; --hint: #9aa3ad;
+      --accent: #4f95ec; --ok: #3cc075; --bad: #ef6b6b;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, system-ui, "Segoe UI", Roboto, Arial, sans-serif; }
+  body { overscroll-behavior: none; user-select: none; -webkit-user-select: none; }
+  .screen { display: none; min-height: 100%; padding: 16px; max-width: 520px; margin: 0 auto; }
+  .screen.on { display: flex; flex-direction: column; }
+
+  /* --- головна --- */
+  h1 { font-size: 22px; margin: 4px 0 2px; }
+  .sub { color: var(--hint); font-size: 14px; margin-bottom: 14px; }
+  .today { display: flex; gap: 8px; margin-bottom: 14px; }
+  .pill { flex: 1; background: var(--bg2); border-radius: 12px; padding: 10px; text-align: center; }
+  .pill b { display: block; font-size: 22px; }
+  .pill span { font-size: 12px; color: var(--hint); }
+  .levels { display: grid; gap: 8px; }
+  .lvl { display: flex; align-items: center; gap: 10px; background: var(--bg2); border: 0;
+    border-radius: 14px; padding: 12px 14px; text-align: left; color: var(--text);
+    font: inherit; cursor: pointer; }
+  .lvl .ic { font-size: 22px; width: 30px; text-align: center; }
+  .lvl .tx { flex: 1; }
+  .lvl .tx b { display: block; font-size: 16px; }
+  .lvl .tx small { color: var(--hint); font-size: 13px; }
+  .lvl .best { text-align: right; font-size: 13px; color: var(--hint); white-space: nowrap; }
+  .lvl.mist { border: 2px dashed var(--bad); }
+  .lvl[disabled] { opacity: .45; }
+
+  /* --- раунд --- */
+  .top { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--hint); }
+  .bar { flex: 1; height: 8px; background: var(--bg2); border-radius: 4px; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .25s; }
+  .task { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center;
+    min-height: 180px; }
+  .q { font-size: 44px; font-weight: 700; letter-spacing: 1px; text-align: center; }
+  .q .slot { display: inline-block; min-width: 1.6em; border-bottom: 4px solid var(--accent);
+    color: var(--accent); }
+  .q.ok .slot { color: var(--ok); border-color: var(--ok); }
+  .q.bad .slot { color: var(--bad); border-color: var(--bad); }
+  .fix { margin-top: 12px; font-size: 22px; color: var(--ok); min-height: 30px; font-weight: 600; }
+  .streak { margin-top: 6px; font-size: 15px; color: var(--hint); min-height: 22px; }
+  .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding-bottom: 8px; }
+  .pad button { height: 62px; border: 0; border-radius: 14px; background: var(--bg2);
+    color: var(--text); font-size: 28px; font-weight: 600; cursor: pointer; }
+  .pad button:active { transform: scale(.96); }
+  .pad .go { background: var(--accent); color: var(--accent-text); }
+
+  /* --- підсумок --- */
+  .res { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; gap: 6px; }
+  .stars { font-size: 48px; letter-spacing: 6px; }
+  .big { font-size: 30px; font-weight: 700; }
+  .res p { margin: 2px 0; color: var(--hint); }
+  .res .rec { color: var(--ok); font-weight: 600; }
+  .btns { display: grid; gap: 8px; padding-bottom: 8px; }
+  .btn { height: 52px; border: 0; border-radius: 14px; font: inherit; font-size: 17px; font-weight: 600;
+    background: var(--accent); color: var(--accent-text); cursor: pointer; }
+  .btn.alt { background: var(--bg2); color: var(--text); }
+  .wrong { margin-top: 8px; font-size: 16px; color: var(--text); }
+</style>
+</head>
+<body>
+
+<section id="home" class="screen on">
+  <h1>Рахунок-тренер</h1>
+  <div class="sub">10 прикладів — і готово. Помилки повертаються наприкінці.</div>
+  <div class="today">
+    <div class="pill"><b id="tToday">0</b><span>прикладів сьогодні</span></div>
+    <div class="pill"><b id="tDays">0</b><span>днів поспіль</span></div>
+  </div>
+  <div class="levels" id="levels"></div>
+</section>
+
+<section id="play" class="screen">
+  <div class="top"><span id="pLvl"></span><div class="bar"><i id="pBar"></i></div><span id="pTime">0 с</span></div>
+  <div class="task">
+    <div class="q" id="q"></div>
+    <div class="fix" id="fix"></div>
+    <div class="streak" id="streak"></div>
+  </div>
+  <div class="pad" id="pad"></div>
+</section>
+
+<section id="done" class="screen">
+  <div class="res">
+    <div class="stars" id="dStars"></div>
+    <div class="big" id="dTime"></div>
+    <p id="dErr"></p>
+    <p class="rec" id="dRec"></p>
+    <div class="wrong" id="dWrong"></div>
+  </div>
+  <div class="btns">
+    <button class="btn" id="again">Ще раз</button>
+    <button class="btn alt" id="toHome">До рівнів</button>
+  </div>
+</section>
+
+<script>
+"use strict";
+// Скрипт Telegram створює WebApp і в звичайному браузері, але initData
+// непорожній лише всередині Telegram — за ним і розрізняємо.
+const tg = window.Telegram && Telegram.WebApp && Telegram.WebApp.initData ? Telegram.WebApp : null;
+const ROUND = 10;
+
+// ---------- приклади ----------
+const R = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+// Кожен генератор повертає {l, r, a}: ліва частина, права, відповідь.
+// «?» у l або r — місце, куди вводиться відповідь.
+const G = {
+  add20()   { const a = R(2, 18), b = R(2, 20 - a); return { l: `${a} + ${b} =`, r: "?", a: a + b }; },
+  sub20()   { const a = R(4, 20), b = R(2, a - 2);  return { l: `${a} − ${b} =`, r: "?", a: a - b }; },
+  cross()   {                                   // через десяток: 8 + 5, 14 − 6
+    if (Math.random() < .5) { const a = R(3, 9), b = R(11 - a, 9); return { l: `${a} + ${b} =`, r: "?", a: a + b }; }
+    const b = R(3, 9), a = R(11, b + 9); return { l: `${a} − ${b} =`, r: "?", a: a - b };
+  },
+  mix20()   { return Math.random() < .5 ? G.add20() : G.sub20(); },
+  missing() {
+    const a = R(2, 18), b = R(2, 20 - a), s = a + b, k = R(0, 2);
+    if (k === 0) return { l: `${a} + ? =`, r: `${s}`, a: b };
+    if (k === 1) return { l: `${s} − ? =`, r: `${a}`, a: b };
+    return { l: `? − ${b} =`, r: `${a}`, a: s };
+  },
+  dbl100()  { const a = R(1, 50); return { l: `${a} + ${a} =`, r: "?", a: 2 * a }; },
+  dbl2()    { const a = 2 * R(1, 25); return { l: `${a} + ${a} =`, r: "?", a: 2 * a }; },
+  dbl5()    { const a = 5 * R(1, 20); return { l: `${a} + ${a} =`, r: "?", a: 2 * a }; },
+  half()    { const a = R(2, 50); return { l: `${2 * a} − ${a} =`, r: "?", a: a }; },
+};
+
+const LEVELS = [
+  { id: "add20",   ic: "➕", t: "Додавання до 20",       s: "7 + 12",          sec: 4 },
+  { id: "sub20",   ic: "➖", t: "Віднімання до 20",      s: "18 − 13",         sec: 5 },
+  { id: "cross",   ic: "🔟", t: "Через десяток",         s: "8 + 5, 14 − 6",   sec: 4 },
+  { id: "mix20",   ic: "🔀", t: "Впереміш до 20",        s: "уважно до знака", sec: 5 },
+  { id: "missing", ic: "❓", t: "Пропущене число",       s: "7 + ? = 15",      sec: 6 },
+  { id: "dbl2",    ic: "✌️", t: "Подвоєння через 2",     s: "16 + 16",         sec: 5 },
+  { id: "dbl5",    ic: "🖐", t: "Подвоєння через 5",     s: "35 + 35",         sec: 5 },
+  { id: "dbl100",  ic: "👯", t: "Подвоєння до 100",      s: "37 + 37",         sec: 6 },
+  { id: "half",    ic: "🍕", t: "Половина",              s: "74 − 37",         sec: 6 },
+];
+
+// ---------- збереження ----------
+// Telegram CloudStorage — прогрес однаковий на телефоні й комп'ютері.
+// Поза Telegram (або на старому клієнті) — localStorage.
+const KEY = "rt_state";
+let S = { best: {}, mist: {}, days: {}, };
+
+function cloudOk() { return tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast("6.9"); }
+function loadState() {
+  return new Promise(res => {
+    const apply = raw => { try { if (raw) S = Object.assign(S, JSON.parse(raw)); } catch (e) {} res(); };
+    if (cloudOk()) tg.CloudStorage.getItem(KEY, (err, v) => apply(err ? lsGet() : (v || lsGet())));
+    else apply(lsGet());
+  });
+}
+function lsGet() { try { return localStorage.getItem(KEY); } catch (e) { return null; } }
+function saveState() {
+  // CloudStorage тримає до 4096 символів на ключ — обрізаємо історію помилок і днів.
+  const m = Object.entries(S.mist).sort((x, y) => y[1] - x[1]).slice(0, 40);
+  S.mist = Object.fromEntries(m);
+  const d = Object.keys(S.days).sort().slice(-60);
+  S.days = Object.fromEntries(d.map(k => [k, S.days[k]]));
+  const raw = JSON.stringify(S);
+  try { localStorage.setItem(KEY, raw); } catch (e) {}
+  if (cloudOk()) tg.CloudStorage.setItem(KEY, raw, () => {});
+}
+const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+function streakDays() {
+  let n = 0; const d = new Date();
+  if (!S.days[dayKey(d)]) d.setDate(d.getDate() - 1);   // сьогодні ще не грала — рахуємо до вчора
+  while (S.days[dayKey(d)]) { n++; d.setDate(d.getDate() - 1); }
+  return n;
+}
+
+// ---------- головна ----------
+const $ = id => document.getElementById(id);
+function show(id) {
+  document.querySelectorAll(".screen").forEach(s => s.classList.toggle("on", s.id === id));
+  if (tg && tg.BackButton) id === "home" ? tg.BackButton.hide() : tg.BackButton.show();
+}
+function fmtTime(ms) { const s = Math.round(ms / 1000); return s < 60 ? `${s} с` : `${Math.floor(s / 60)} хв ${s % 60} с`; }
+function starStr(n) { return "★".repeat(n) + "☆".repeat(3 - n); }
+
+function renderHome() {
+  $("tToday").textContent = S.days[dayKey()] || 0;
+  $("tDays").textContent = streakDays();
+  const box = $("levels"); box.innerHTML = "";
+  const mCount = Object.keys(S.mist).length;
+  const mb = document.createElement("button");
+  mb.className = "lvl mist"; mb.disabled = mCount === 0;
+  mb.innerHTML = `<span class="ic">🎯</span><span class="tx"><b>Робота над помилками</b>
+    <small>${mCount ? `прикладів, що не виходили: ${mCount}` : "поки помилок немає"}</small></span>`;
+  mb.onclick = () => start("mist");
+  box.appendChild(mb);
+  for (const L of LEVELS) {
+    const b = S.best[L.id];
+    const el = document.createElement("button");
+    el.className = "lvl";
+    el.innerHTML = `<span class="ic">${L.ic}</span><span class="tx"><b>${L.t}</b><small>${L.s}</small></span>
+      <span class="best">${b ? `${starStr(b.st)}<br>${fmtTime(b.ms)}` : ""}</span>`;
+    el.onclick = () => start(L.id);
+    box.appendChild(el);
+  }
+}
+
+// ---------- раунд ----------
+let R0 = null;   // поточний раунд
+
+function makeRound(id) {
+  const out = [], seen = new Set();
+  if (id === "mist") {
+    // найчастіші помилки першими, решту добираємо з тих самих прикладів
+    // кожна помилка — щонайбільше двічі, решту добираємо «через десяток»:
+    // десять разів поспіль той самий приклад — це вже не тренування
+    const keys = Object.entries(S.mist).sort((x, y) => y[1] - x[1]).map(([k]) => k);
+    for (const k of keys.slice(0, ROUND)) out.push(JSON.parse(k));
+    for (const k of keys.slice(0, ROUND - out.length)) out.push(JSON.parse(k));
+    while (out.length < ROUND) out.push(G.cross());
+    return out.sort(() => Math.random() - .5);
+  }
+  for (let i = 0; i < 500 && out.length < ROUND; i++) {
+    const p = G[id](), k = p.l + p.r;
+    if (!seen.has(k)) { seen.add(k); out.push(p); }
+  }
+  return out;
+}
+
+function start(id) {
+  const L = LEVELS.find(x => x.id === id) || { id: "mist", t: "Робота над помилками", sec: 6 };
+  R0 = { L, queue: makeRound(id), total: 0, done: 0, wrong: [], requeued: new Set(),
+         t0: Date.now(), input: "", lock: false, streak: 0, cleared: [] };
+  R0.total = R0.queue.length;
+  $("pLvl").textContent = L.t;
+  show("play");
+  next();
+  clearInterval(R0.timer);
+  R0.timer = setInterval(() => { $("pTime").textContent = fmtTime(Date.now() - R0.t0); }, 500);
+}
+
+function cur() { return R0.queue[0]; }
+function renderQ(state) {
+  const p = cur(), v = R0.input || " ";
+  const slot = `<span class="slot">${v}</span>`;
+  const l = p.l.includes("?") ? p.l.replace("?", slot) : p.l;
+  const r = p.r === "?" ? slot : p.r.replace("?", slot);
+  const q = $("q");
+  q.className = "q" + (state ? " " + state : "");
+  q.innerHTML = `${l} ${r}`;
+  $("pBar").style.width = `${100 * R0.done / R0.total}%`;
+}
+function next() {
+  R0.input = ""; R0.lock = false; $("fix").textContent = "";
+  if (!R0.queue.length) return finish();
+  renderQ();
+}
+function key(k) {
+  if (!R0 || R0.lock || !$("play").classList.contains("on")) return;
+  if (k === "⌫") R0.input = R0.input.slice(0, -1);
+  else if (k === "✓") { if (R0.input) check(); return; }
+  else if (R0.input.length < 3) R0.input += k;
+  renderQ();
+  // Кількість цифр відповіді відома — щойно введено стільки ж, перевіряємо одразу.
+  if (R0.input.length === String(cur().a).length) check();
+}
+function factKey(p) { return JSON.stringify({ l: p.l, r: p.r, a: p.a }); }
+
+function check() {
+  const p = cur(), ok = Number(R0.input) === p.a;
+  R0.lock = true;
+  S.days[dayKey()] = (S.days[dayKey()] || 0) + 1;
+  if (ok) {
+    R0.streak++;
+    haptic("success");
+    renderQ("ok");
+    // правильно відповіла на «приклад з помилкою» — у списку помилок він слабшає
+    const fk = factKey(p);
+    if (S.mist[fk]) { S.mist[fk]--; if (S.mist[fk] <= 0) delete S.mist[fk]; }
+    $("streak").textContent = R0.streak >= 3 ? `🔥 ${R0.streak} поспіль` : "";
+    setTimeout(() => { R0.queue.shift(); R0.done++; next(); }, 350);
+  } else {
+    R0.streak = 0;
+    haptic("error");
+    renderQ("bad");
+    $("fix").textContent = `${p.l.replace("?", p.a)} ${p.r === "?" ? p.a : p.r.replace("?", p.a)}`;
+    $("streak").textContent = "";
+    const fk = factKey(p);
+    S.mist[fk] = (S.mist[fk] || 0) + 2;   // треба двічі розв'язати правильно, щоб зник
+    if (!R0.wrong.includes($("fix").textContent)) R0.wrong.push($("fix").textContent);
+    setTimeout(() => {
+      R0.queue.shift();
+      // приклад з помилкою — ще раз наприкінці раунду (один раз, щоб раунд не тягнувся)
+      if (!R0.requeued.has(fk)) { R0.requeued.add(fk); R0.queue.push(p); R0.total++; }
+      else R0.done++;
+      next();
+    }, 1600);
+  }
+}
+
+function finish() {
+  clearInterval(R0.timer);
+  const ms = Date.now() - R0.t0, errs = R0.wrong.length, L = R0.L;
+  const target = L.sec * 1000 * ROUND;
+  const st = errs === 0 && ms <= target ? 3 : errs <= 2 ? 2 : 1;
+  $("dStars").textContent = starStr(st);
+  $("dTime").textContent = fmtTime(ms);
+  $("dErr").textContent = errs ? `Помилок: ${errs}` : "Без жодної помилки!";
+  let rec = "";
+  if (L.id !== "mist") {
+    const b = S.best[L.id];
+    if (!b || st > b.st || (st === b.st && ms < b.ms)) {
+      if (b) rec = "🏆 Новий рекорд!";
+      S.best[L.id] = { st, ms };
+    }
+  }
+  $("dRec").textContent = rec;
+  $("dWrong").innerHTML = errs ? "Запам'ятай:<br><b>" + R0.wrong.join("<br>") + "</b>" : "";
+  saveState();
+  haptic(st === 3 ? "success" : "warning");
+  show("done");
+}
+
+function haptic(kind) { try { tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(kind); } catch (e) {} }
+
+// ---------- клавіатура ----------
+for (const k of ["1","2","3","4","5","6","7","8","9","⌫","0","✓"]) {
+  const b = document.createElement("button");
+  b.textContent = k; if (k === "✓") b.className = "go";
+  b.addEventListener("pointerdown", e => { e.preventDefault(); key(k); });
+  $("pad").appendChild(b);
+}
+document.addEventListener("keydown", e => {
+  if (/^[0-9]$/.test(e.key)) key(e.key);
+  else if (e.key === "Backspace") key("⌫");
+  else if (e.key === "Enter") key("✓");
+});
+$("again").onclick = () => start(R0.L.id);
+$("toHome").onclick = () => { renderHome(); show("home"); };
+
+// ---------- Telegram ----------
+function applyTheme() {
+  if (!tg) return;
+  document.documentElement.setAttribute("data-tg", "");
+  const p = tg.themeParams || {}, set = (v, c) => c && document.documentElement.style.setProperty(v, c);
+  set("--bg", p.bg_color); set("--bg2", p.secondary_bg_color); set("--text", p.text_color);
+  set("--hint", p.hint_color); set("--accent", p.button_color); set("--accent-text", p.button_text_color);
+}
+if (tg) {
+  tg.ready(); tg.expand();
+  try { tg.disableVerticalSwipes && tg.disableVerticalSwipes(); } catch (e) {}
+  applyTheme(); tg.onEvent("themeChanged", applyTheme);
+  tg.BackButton && tg.BackButton.onClick(() => {
+    if (R0) clearInterval(R0.timer);
+    saveState(); renderHome(); show("home");
+  });
+}
+loadState().then(renderHome);
+</script>
+</body>
+</html>
